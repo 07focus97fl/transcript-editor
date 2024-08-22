@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcript Editor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            background-color: #f0f0f0;
+        }
+        #editor-container {
+            width: 60%;
+            margin-left: 60px;
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        #source-editor, #exchange-editor {
+            width: 100%;
+            height: 300px;
+            margin-bottom: 10px;
+        }
+        .button-container {
+            margin-bottom: 10px;
+        }
+        button {
+            margin-right: 5px;
+            background-color: #a7c2a8;
+            border-radius: 5px;
+        }
+        #video-container {
+            width: 35%;
+            margin-top: 60px;
+        }
+        video {
+            width: 100%;
+            max-height: 450px;
+        }
+        #timestamp-buttons {
+            position: fixed;
+            display: none;
+        }
+        #move {
+            margin-right: 60px;
+        }
+        #add {
+            margin-right: 5px;
+            background-color: #a7c2a8;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="editor-container">
+        <div class="button-container">
+            <button id="load-file">Load Text File</button>
+            <button id="save-file">Save File</button>
+            <button id="add">Add (Ctrl + A)</button>
+            <button id="speaker-0-h">Speaker 0 = H</button>
+            <button id="speaker-0-w">Speaker 0 = W</button>
+        </div>
+        <textarea id="source-editor" placeholder="Source text will be loaded here"></textarea>
+        <textarea id="exchange-editor" placeholder="Exchanges will be displayed here"></textarea>
+        <div class="button-container">
+            <button id="move">Move</button>
+            <button id="add-interruption">Add Interruption</button>
+        </div>
+    </div>
+
+    <div id="video-container">
+        <div class="button-container">
+            <button id="load-video">Load Video</button>
+        </div>
+        <video id="video" controls>
+            Your browser does not support the video tag.
+        </video>
+        <div class="button-container">
+            <button id="play-pause">Play/Pause</button>
+            <button id="back-5s">-5s</button>
+            <button id="forward-5s">+5s</button>
+            <button id="back-1s">-1s</button>
+            <button id="forward-1s">+1s</button>
+        </div>
+    </div>
+
+    <div id="timestamp-buttons">
+        <button id="decrement-timestamp">▼</button>
+        <button id="increment-timestamp">▲</button>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const video = document.getElementById('video');
+            const sourceEditor = document.getElementById('source-editor');
+            const exchangeEditor = document.getElementById('exchange-editor');
+            const timestampButtons = document.getElementById('timestamp-buttons');
+            const decrementButton = document.getElementById('decrement-timestamp');
+            const incrementButton = document.getElementById('increment-timestamp');
+            const loadFileButton = document.getElementById('load-file');
+            const saveFileButton = document.getElementById('save-file');
+            const speaker0HButton = document.getElementById('speaker-0-h');
+            const speaker0WButton = document.getElementById('speaker-0-w');
+            const addInterruptionButton = document.getElementById('add-interruption');
+            const moveButton = document.getElementById('move');
+            const addButton = document.getElementById('add');
+        
+            let currentTimestamp = null;
+            let interruptionPopup = null;
+            let moveState = 'inactive';
+            let textToMove = '';
+            let moveStartPosition = null;
+        
+            // Video-related functions
+            function loadVideo() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'video/*';
+                input.onchange = e => {
+                    const file = e.target.files[0];
+                    const videoURL = URL.createObjectURL(file);
+                    video.src = videoURL;
+                }
+                input.click();
+            }
+        
+            function togglePlayPause() {
+                if (video.paused) {
+                    video.play();
+                } else {
+                    video.pause();
+                }
+            }
+        
+            function adjustVideoTime(seconds) {
+                video.currentTime += seconds;
+            }
+        
+            // Timestamp adjuster functions
+            function handleSelectionChange() {
+                const cursorPosition = exchangeEditor.selectionStart;
+                const text = exchangeEditor.value;
+                const timestamp = findTimestampAtPosition(text, cursorPosition);
+        
+                if (timestamp) {
+                    currentTimestamp = timestamp;
+                    showTimestampButtons(exchangeEditor);
+                } else {
+                    hideTimestampButtons();
+                }
+            }
+        
+            function findTimestampAtPosition(text, position) {
+                const timestampRegex = /\b\d{1,2}:[0-5]\d\b/g;
+                let match;
+        
+                while ((match = timestampRegex.exec(text)) !== null) {
+                    if (position >= match.index && position <= match.index + match[0].length) {
+                        return {
+                            value: match[0],
+                            index: match.index
+                        };
+                    }
+                }
+        
+                return null;
+            }
+        
+            function showTimestampButtons(target) {
+                const rect = target.getBoundingClientRect();
+            
+                timestampButtons.style.display = 'flex';
+                timestampButtons.style.flexDirection = 'row';
+                timestampButtons.style.position = 'fixed';
+                timestampButtons.style.left = `${rect.left - 70}px`;
+                timestampButtons.style.top = '50%';
+                timestampButtons.style.transform = 'translateY(-50%)';
+        
+                timestampButtons.innerHTML = '';
+                timestampButtons.appendChild(decrementButton);
+                timestampButtons.appendChild(incrementButton);
+            }
+        
+            function hideTimestampButtons() {
+                timestampButtons.style.display = 'none';
+                currentTimestamp = null;
+            }
+        
+            function adjustTimestamp(direction) {
+                if (!currentTimestamp) return;
+        
+                let [minutes, seconds] = currentTimestamp.value.split(':').map(Number);
+                let totalSeconds = minutes * 60 + seconds + direction;
+        
+                if (totalSeconds < 0) totalSeconds = 0;
+                if (totalSeconds > 600) totalSeconds = 600;
+        
+                minutes = Math.floor(totalSeconds / 60);
+                seconds = totalSeconds % 60;
+        
+                const newTimestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        
+                exchangeEditor.value = exchangeEditor.value.substring(0, currentTimestamp.index) +
+                               newTimestamp +
+                               exchangeEditor.value.substring(currentTimestamp.index + currentTimestamp.value.length);
+        
+                currentTimestamp.value = newTimestamp;
+            }
+        
+            function loadFile() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.txt';
+                input.onchange = e => {
+                    const file = e.target.files[0];
+                    const reader = new FileReader();
+                    reader.readAsText(file, 'UTF-8');
+                    reader.onload = readerEvent => {
+                        const content = readerEvent.target.result;
+                        const parts = content.split(/\n\s*\n/);
+                        sourceEditor.value = parts[0].trim();
+                        exchangeEditor.value = parts.slice(1).join('\n\n').trim();
+                    }
+                }
+                input.click();
+            }
+        
+            function saveFile() {
+                const content = exchangeEditor.value;
+                const blob = new Blob([content], { type: 'text/plain' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'transcript.txt';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+        
+            function replaceSpeakers(speaker0) {
+                fetch('/replace_speakers', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ content: exchangeEditor.value, speaker_0: speaker0 }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.processed_text) {
+                        exchangeEditor.value = data.processed_text;
+                    } else {
+                        console.error('Failed to replace speakers');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+            }
+        
+            function showInterruptionPopup() {
+                const cursorPosition = exchangeEditor.selectionStart;
+                const text = exchangeEditor.value;
+                const lastTimestamp = findLastTimestamp(text, cursorPosition);
+        
+                if (!lastTimestamp) {
+                    alert('No valid timestamp found before the cursor.');
+                    return;
+                }
+        
+                const startTime = incrementTimestamp(lastTimestamp, 0);
+                const endTime = incrementTimestamp(startTime, 1);
+        
+                if (interruptionPopup) {
+                    document.body.removeChild(interruptionPopup);
+                }
+        
+                interruptionPopup = createPopup(startTime, endTime);
+                document.body.appendChild(interruptionPopup);
+        
+                positionPopup(interruptionPopup, exchangeEditor);
+            }
+        
+            function createPopup(startTime, endTime) {
+                const popup = document.createElement('div');
+                popup.style.position = 'absolute';
+                popup.style.padding = '10px';
+                popup.style.background = 'white';
+                popup.style.border = '1px solid black';
+                popup.style.zIndex = '1000';
+        
+                popup.innerHTML = `
+                    <div>
+                        Start time: <input type="text" id="start-time" value="${startTime}">
+                        <button id="start-decrement">▼</button>
+                        <button id="start-increment">▲</button>
+                    </div>
+                    <div>
+                        End time: <input type="text" id="end-time" value="${endTime}">
+                        <button id="end-decrement">▼</button>
+                        <button id="end-increment">▲</button>
+                    </div>
+                    <div>
+                        Speaker: 
+                        <button id="speaker-h">H</button>
+                        <button id="speaker-w">W</button>
+                    </div>
+                    <button id="add-interruption-confirm">Add</button>
+                `;
+        
+                popup.querySelector('#start-decrement').addEventListener('click', () => adjustTime('start', -1));
+                popup.querySelector('#start-increment').addEventListener('click', () => adjustTime('start', 1));
+                popup.querySelector('#end-decrement').addEventListener('click', () => adjustTime('end', -1));
+                popup.querySelector('#end-increment').addEventListener('click', () => adjustTime('end', 1));
+                popup.querySelector('#speaker-h').addEventListener('click', () => setSpeaker('H'));
+                popup.querySelector('#speaker-w').addEventListener('click', () => setSpeaker('W'));
+                popup.querySelector('#add-interruption-confirm').addEventListener('click', addInterruption);
+        
+                return popup;
+            }
+        
+            function positionPopup(popup, target) {
+                const rect = target.getBoundingClientRect();
+                popup.style.left = `${rect.left}px`;
+                popup.style.top = `${rect.bottom + 5}px`;
+            }
+        
+            function findLastTimestamp(text, position) {
+                const timestampRegex = /\b\d{1,2}:[0-5]\d\b/g;
+                let lastMatch = null;
+                let match;
+        
+                while ((match = timestampRegex.exec(text)) !== null) {
+                    if (match.index < position) {
+                        lastMatch = match[0];
+                    } else {
+                        break;
+                    }
+                }
+        
+                return lastMatch;
+            }
+        
+            function incrementTimestamp(timestamp, seconds) {
+                let [minutes, secs] = timestamp.split(':').map(Number);
+                let totalSeconds = minutes * 60 + secs + seconds;
+                minutes = Math.floor(totalSeconds / 60);
+                secs = totalSeconds % 60;
+                return `${minutes}:${secs.toString().padStart(2, '0')}`;
+            }
+        
+            function adjustTime(type, direction) {
+                const input = document.getElementById(`${type}-time`);
+                input.value = incrementTimestamp(input.value, direction);
+                if (type === 'start') {
+                    document.getElementById('end-time').value = incrementTimestamp(input.value, 1);
+                }
+            }
+        
+            function setSpeaker(speaker) {
+                window.currentSpeaker = speaker;
+            }
+        
+            function addInterruption() {
+                const startTime = document.getElementById('start-time').value;
+                const endTime = document.getElementById('end-time').value;
+                const speaker = window.currentSpeaker || 'H';
+        
+                const interruptionString = `${startTime} - ${endTime} ${speaker}: `;
+                const cursorPosition = exchangeEditor.selectionStart;
+        
+                exchangeEditor.value = exchangeEditor.value.slice(0, cursorPosition) + interruptionString + exchangeEditor.value.slice(cursorPosition);
+                exchangeEditor.selectionStart = exchangeEditor.selectionEnd = cursorPosition + interruptionString.length;
+        
+                document.body.removeChild(interruptionPopup);
+                interruptionPopup = null;
+                exchangeEditor.focus();
+            }
+
+            function handleMoveClick() {
+                if (moveState === 'inactive') {
+                    startMove();
+                } else if (moveState === 'selecting-destination') {
+                    endMove();
+                }
+            }
+
+            function startMove() {
+                const selection = exchangeEditor.value.substring(exchangeEditor.selectionStart, exchangeEditor.selectionEnd);
+                if (selection) {
+                    textToMove = selection;
+                    moveStartPosition = exchangeEditor.selectionStart;
+                    moveState = 'selecting-destination';
+                    moveButton.textContent = 'End Move';
+                    exchangeEditor.setSelectionRange(exchangeEditor.selectionEnd, exchangeEditor.selectionEnd);
+                } else {
+                    alert('Please select the text you want to move before clicking the Move button.');
+                }
+            }
+
+            function endMove() {
+                const destinationPosition = exchangeEditor.selectionStart;
+                const beforeMove = exchangeEditor.value.substring(0, moveStartPosition);
+                const afterMoveStart = exchangeEditor.value.substring(moveStartPosition + textToMove.length);
+                
+                let newText;
+                if (destinationPosition > moveStartPosition) {
+                    // Moving forward
+                    const betweenMove = exchangeEditor.value.substring(moveStartPosition + textToMove.length, destinationPosition);
+                    newText = beforeMove + betweenMove + textToMove + ' ' + afterMoveStart.substring(destinationPosition - moveStartPosition - textToMove.length);
+                } else {
+                    // Moving backward
+                    const betweenMove = exchangeEditor.value.substring(destinationPosition, moveStartPosition);
+                    newText = exchangeEditor.value.substring(0, destinationPosition) + textToMove + ' ' + betweenMove + afterMoveStart;
+                }
+
+                exchangeEditor.value = newText;
+                moveState = 'inactive';
+                moveButton.textContent = 'Move';
+                textToMove = '';
+                moveStartPosition = null;
+            }
+
+            function handleAddClick() {
+                const selection = sourceEditor.value.substring(sourceEditor.selectionStart, sourceEditor.selectionEnd);
+                if (selection) {
+                    const nextEmptyExchange = findNextEmptyExchange(exchangeEditor.value);
+                    if (nextEmptyExchange) {
+                        // Remove the selected text from the source editor
+                        const beforeSelection = sourceEditor.value.slice(0, sourceEditor.selectionStart);
+                        const afterSelection = sourceEditor.value.slice(sourceEditor.selectionEnd);
+                        sourceEditor.value = beforeSelection + afterSelection;
+                        
+                        // Add the selected text to the empty exchange
+                        exchangeEditor.value = exchangeEditor.value.slice(0, nextEmptyExchange.end) + selection + exchangeEditor.value.slice(nextEmptyExchange.end);
+                        
+                        exchangeEditor.setSelectionRange(nextEmptyExchange.end + selection.length, nextEmptyExchange.end + selection.length);
+                        exchangeEditor.focus();
+                    } else {
+                        alert('No empty exchange found. Please add a new exchange manually.');
+                    }
+                } else {
+                    alert('Please select the text you want to add before clicking the Add button.');
+                }
+            }
+
+            function findNextEmptyExchange(text) {
+                const exchangeRegex = /(\d{1,2}:\d{2} - \d{1,2}:\d{2} [HW]:)(\s*)$/gm;
+                let match;
+                while ((match = exchangeRegex.exec(text)) !== null) {
+                    if (match[2].trim() === '') {
+                        return { start: match.index, end: match.index + match[0].length };
+                    }
+                }
+                return null;
+            }
+        
+            // Event listeners
+            exchangeEditor.addEventListener('mouseup', handleSelectionChange);
+            exchangeEditor.addEventListener('keyup', handleSelectionChange);
+            decrementButton.addEventListener('click', () => adjustTimestamp(-1));
+            incrementButton.addEventListener('click', () => adjustTimestamp(1));
+            loadFileButton.addEventListener('click', loadFile);
+            saveFileButton.addEventListener('click', saveFile);
+            speaker0HButton.addEventListener('click', () => replaceSpeakers('H'));
+            speaker0WButton.addEventListener('click', () => replaceSpeakers('W'));
+            addInterruptionButton.addEventListener('click', showInterruptionPopup);
+            moveButton.addEventListener('click', handleMoveClick);
+            addButton.addEventListener('click', handleAddClick);
+
+            // Add hotkey for the "Add" button (Ctrl + A)
+            document.addEventListener('keydown', function(event) {
+                if (event.ctrlKey && event.key === 'a') {
+                    event.preventDefault(); // Prevent the default "Select All" behavior
+                    handleAddClick();
+                }
+            });
+        
+            // Video-related event listeners
+            document.getElementById('load-video').addEventListener('click', loadVideo);
+            document.getElementById('play-pause').addEventListener('click', togglePlayPause);
+            document.getElementById('back-5s').addEventListener('click', () => adjustVideoTime(-5));
+            document.getElementById('forward-5s').addEventListener('click', () => adjustVideoTime(5));
+            document.getElementById('back-1s').addEventListener('click', () => adjustVideoTime(-1));
+            document.getElementById('forward-1s').addEventListener('click', () => adjustVideoTime(1));
+        });
+    </script>
+</body>
+</html>
